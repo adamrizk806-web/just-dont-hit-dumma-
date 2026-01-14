@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Retro Racer Pro</title>
+    <style>
+        /* Retro styling and no-zoom for mobile */
+        body { margin: 0; background: #000; overflow: hidden; font-family: 'Courier New', monospace; touch-action: manipulation; }
+        /* Pixelated rendering for canvas */
+        canvas { display: block; margin: 0 auto; background: #222; image-rendering: pixelated; box-shadow: 0 0 20px #0f0; }
+        
+        /* UI Overlay Styling */
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #0f0; background: rgba(0,0,0,0.92); z-index: 10; text-align: center; padding: 10px; box-sizing: border-box;}
+        h1 { text-shadow: 3px 3px #f0f; margin-bottom: 10px; font-size: 32px; }
+        
+        /* Retro Buttons */
+        .btn { padding: 10px 15px; margin: 5px; font-size: 14px; cursor: pointer; background: #000; border: 2px solid #0f0; color: #0f0; font-family: inherit; text-transform: uppercase; transition: 0.1s; }
+        .btn:hover { background: #0f0; color: #000; transform: scale(1.05); }
+        .btn:active { transform: scale(0.95); }
+        
+        /* Stats UI */
+        #stats { position: absolute; top: 10px; width: 100%; display: flex; justify-content: space-around; color: #0f0; font-size: 20px; pointer-events: none; font-weight: bold; text-shadow: 1px 1px #000; }
+        
+        /* Mobile Touch Controls */
+        #controls { position: absolute; bottom: 20px; width: 100%; display: flex; justify-content: space-between; padding: 0 30px; box-sizing: border-box; pointer-events: none; }
+        .touch-btn { width: 80px; height: 80px; background: rgba(0, 255, 0, 0.15); border: 3px solid #0f0; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #0f0; font-size: 30px; pointer-events: auto; -webkit-user-select: none; user-select: none; }
+        .touch-btn:active { background: rgba(0, 255, 0, 0.4); }
+        
+        .hidden { display: none !important; }
+        .shop-group { border: 1px solid #0f0; padding: 10px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="stats">
+        <div>SCORE: <span id="score-val">0</span></div>
+        <div>COINS: <span id="coin-val">0</span></div>
+    </div>
+
+    <div id="overlay">
+        <h1>RETRO RACER PRO</h1>
+        <div id="menu-main">
+            <p id="crash-msg" style="color: #f0f;"></p>
+            <button class="btn" style="font-size: 20px; padding: 15px 30px; border-color: #f0f; color: #f0f;" onclick="startGame()">>>> START MISSION <<<</button>
+            
+            <div class="shop-group">
+                <p style="margin: 5px;">[ SELECT MAP ]</p>
+                <button class="btn" onclick="setMap('city')">CITY</button>
+                <button class="btn" onclick="setMap('desert')">DESERT</button>
+                <button class="btn" onclick="setMap('cyber')">CYBER CLOUD</button>
+            </div>
+            <div class="shop-group">
+                <p style="margin: 5px;">[ GARAGE ]</p>
+                <button class="btn" id="btn-skin1" onclick="buySkin(1, 50)">PURPLE HAWK (50C)</button>
+                <button class="btn" id="btn-skin2" onclick="buySkin(2, 100)">BLUE BOLT (100C)</button>
+                <button class="btn" id="btn-skin3" onclick="buySkin(3, 150)">GREEN TANK (150C)</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="controls">
+        <div class="touch-btn" id="leftBtn">◀</div>
+        <div class="touch-btn" id="rightBtn">▶</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+/** --- SETUP --- **/
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+// Responsive canvas sizing
+canvas.width = Math.min(window.innerWidth, 420);
+canvas.height = window.innerHeight;
+
+/** --- CONFIGURATION --- **/
+const MAPS = {
+    city: { road: "#444", grass: "#2d2d2d", line: "#fff", shadow: "#111" },
+    desert: { road: "#c2a37e", grass: "#edc9af", line: "#fff", shadow: "#8b4513" },
+    cyber: { road: "#220033", grass: "#0a0011", line: "#00ff00", shadow: "#ff00ff" }
+};
+let activeMap = "city";
+
+// Define Car Styles (Indices 0-3)
+const CAR_STYLES = [
+    { name: "RED ROVER",   color: "#e74c3c", trim: "#96281b", glass: "#87ceeb" }, // 0: Default
+    { name: "PURPLE HAWK", color: "#8e44ad", trim: "#4d05ad", glass: "#f0f" },    // 1: Unlockable
+    { name: "BLUE BOLT",   color: "#3498db", trim: "#1f3a93", glass: "#0ff" },    // 2: Unlockable
+    { name: "GREEN TANK",  color: "#27ae60", trim: "#1e824c", glass: "#ff0" }     // 3: Unlockable
+];
+
+/** --- GAME STATE & SAVE DATA --- **/
+let score = 0;
+let coins = parseInt(localStorage.getItem("retroCoinsV2")) || 0;
+// Keep track of unlocked indexes. 0 is always unlocked.
+let unlocked = JSON.parse(localStorage.getItem("retroUnlockedV2")) || [0];
+let activeSkinIndex = parseInt(localStorage.getItem("retroActiveIndexV2")) || 0;
+let gameState = "MENU";
+let gameSpeed = 6;
+let playerX = canvas.width / 2 - 25;
+let enemies = [];
+let roadCoins = [];
+
+/** --- INPUT HANDLING (PC & MOBILE) --- **/
+const keys = {};
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+let touchL = false, touchR = false;
+const lBtn = document.getElementById("leftBtn");
+const rBtn = document.getElementById("rightBtn");
+
+// Use pointer events for better mobile response
+lBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); touchL = true; lBtn.style.transform = "scale(0.9)"; });
+lBtn.addEventListener("pointerup", (e) => { e.preventDefault(); touchL = false; lBtn.style.transform = "scale(1.0)"; });
+rBtn.addEventListener("pointerdown", (e) => { e.preventDefault(); touchR = true; rBtn.style.transform = "scale(0.9)"; });
+rBtn.addEventListener("pointerup", (e) => { e.preventDefault(); touchR = false; rBtn.style.transform = "scale(1.0)"; });
+
+
+/** --- SHOP & UI SYSTEMS --- **/
+function setMap(m) { activeMap = m; alert("MAP SELECTED: " + m.toUpperCase()); }
+
+function buySkin(idx, cost) {
+    if (unlocked.includes(idx)) {
+        activeSkinIndex = idx;
+        saveData();
+        alert(CAR_STYLES[idx].name + " EQUIPPED!");
+    } else if (coins >= cost) {
+        coins -= cost;
+        unlocked.push(idx);
+        activeSkinIndex = idx;
+        saveData();
+        updateUI();
+        alert("UNLOCKED & EQUIPPED!");
+    } else {
+        alert("INSUFFICIENT FUNDS! NEED " + cost + " COINS.");
+    }
+}
+
+function saveData() {
+    localStorage.setItem("retroCoinsV2", coins);
+    localStorage.setItem("retroUnlockedV2", JSON.stringify(unlocked));
+    localStorage.setItem("retroActiveIndexV2", activeSkinIndex);
+    updateUI();
+}
+
+function updateUI() {
+    document.getElementById("score-val").innerText = score;
+    document.getElementById("coin-val").innerText = coins;
+    // Update shop button text based on ownership
+    for(let i=1; i<=3; i++) {
+        const btn = document.getElementById("btn-skin"+i);
+        if(unlocked.includes(i)) {
+             btn.innerText = CAR_STYLES[i].name + " [EQUIP]";
+             btn.style.borderColor = "#fff";
+        }
+    }
+}
+
+function startGame() {
+    document.getElementById("overlay").classList.add("hidden");
+    score = 0;
+    gameSpeed = 7;
+    enemies = [];
+    roadCoins = [];
+    playerX = canvas.width / 2 - 25;
+    gameState = "PLAYING";
+    updateUI();
+}
+
+/** --- PURE CODE RETRO CAR DRAWING --- **/
+function drawRetroCar(x, y, index) {
+    const style = CAR_STYLES[index];
+    const w = 50, h = 80;
+
+    // 1. Retro Shadow/Outline
+    ctx.fillStyle = MAPS[activeMap].shadow;
+    ctx.fillRect(x + 4, y + 4, w, h);
+
+    // 2. Main Body Base
+    ctx.fillStyle = style.trim;
+    ctx.fillRect(x, y, w, h);
+    
+    // 3. Inner Body Color
+    ctx.fillStyle = style.color;
+    ctx.fillRect(x + 4, y + 2, w - 8, h - 4);
+
+    // 4. Rear Spoiler (Pixel look)
+    ctx.fillStyle = style.trim;
+    ctx.fillRect(x, y + h - 10, w, 8);
+    ctx.fillStyle = style.color;
+    ctx.fillRect(x + 4, y + h - 8, w - 8, 4);
+
+    // 5. The Retro Windshield (Replacing photos)
+    // Dark frame
+    ctx.fillStyle = "#333"; 
+    ctx.fillRect(x + 8, y + 15, w - 16, 25);
+    // Main glass color
+    ctx.fillStyle = style.glass; 
+    ctx.fillRect(x + 10, y + 17, w - 20, 21);
+    // Retro reflection streak
+    ctx.fillStyle = "rgba(255,255,255,0.6)";
+    ctx.fillRect(x + 12, y + 19, 4, 17);
+
+    // 6. Pixel Wheels
+    ctx.fillStyle = "#111";
+    // Rear wheels sticking out
+    ctx.fillRect(x - 4, y + h - 20, 6, 16); ctx.fillRect(x + w - 2, y + h - 20, 6, 16);
+    // Front wheels tucked in
+    ctx.fillRect(x + 2, y + 10, 4, 14); ctx.fillRect(x + w - 6, y + 10, 4, 14);
+}
+
+
+/** --- MAIN GAME LOOP --- **/
+function updateGame() {
+    if (gameState !== "PLAYING") return;
+
+    // Movement (PC & Mobile combo)
+    const speed = 8;
+    if ((keys['ArrowLeft'] || touchL) && playerX > 15) playerX -= speed;
+    if ((keys['ArrowRight'] || touchR) && playerX < canvas.width - 65) playerX += speed;
+
+    // Dynamic Spawning (Gets harder)
+    if (Math.random() < 0.025 + (score * 0.0001)) {
+        // Pick random skin for enemy
+        const randSkin = Math.floor(Math.random() * 4);
+        enemies.push({ x: Math.random() * (canvas.width - 60), y: -100, skin: randSkin });
+    }
+    // Coin Spawning
+    if (Math.random() < 0.015) {
+        roadCoins.push({ x: Math.random() * (canvas.width - 30) + 10, y: -50 });
+    }
+
+    // Process Enemies
+    enemies.forEach((en, i) => {
+        en.y += gameSpeed;
+        // Score points when passing
+        if (en.y > canvas.height) { enemies.splice(i, 1); score += 10; updateUI(); }
+        
+        // Collision (Tight hitbox)
+        if (playerX < en.x + 45 && playerX + 45 > en.x && 
+            canvas.height - 130 < en.y + 75 && canvas.height - 130 + 75 > en.y) {
+            gameOver();
+        }
+    });
+
+    // Process Coins
+    roadCoins.forEach((c, i) => {
+        c.y += gameSpeed;
+        // Coin Collision
+        if (playerX < c.x + 20 && playerX + 50 > c.x && 
+            canvas.height - 130 < c.y + 20 && canvas.height - 130 + 80 > c.y) {
+            coins += 5; 
+            roadCoins.splice(i, 1); 
+            updateUI();
+        }
+    });
+
+    gameSpeed += 0.0015; // Slowly increase speed
+}
+
+function gameOver() {
+    gameState = "MENU";
+    saveData();
+    document.getElementById("overlay").classList.remove("hidden");
+    document.getElementById("crash-msg").innerText = "MISSION FAILED! SCORE: " + score;
+}
+
+function drawGame() {
+    const map = MAPS[activeMap];
+    
+    // Backgrounds
+    ctx.fillStyle = map.grass; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = map.road; ctx.fillRect(15, 0, canvas.width - 30, canvas.height);
+
+    // Retro scrolling road lines
+    ctx.fillStyle = map.line;
+    // Center line
+    for(let i=-50; i<canvas.height; i+=80) {
+        ctx.fillRect(canvas.width/2 - 4, (i + Date.now()/12) % canvas.height, 8, 40);
+    }
+    // Side lines (for extra retro feel)
+    for(let i=-50; i<canvas.height; i+=40) {
+         ctx.fillRect(15, (i + Date.now()/12) % canvas.height, 4, 20);
+         ctx.fillRect(canvas.width - 19, (i + Date.now()/12) % canvas.height, 4, 20);
+    }
+
+    if (gameState === "PLAYING") {
+        // Draw Player
+        drawRetroCar(playerX, canvas.height - 130, activeSkinIndex);
+        
+        // Draw Enemies
+        enemies.forEach(en => drawRetroCar(en.x, en.y, en.skin));
+        
+        // Draw Coins (Pixelated)
+        roadCoins.forEach(c => {
+            ctx.fillStyle = "#ff0"; ctx.fillRect(c.x, c.y, 16, 16);
+            ctx.fillStyle = "#fa0"; ctx.fillRect(c.x+4, c.y+4, 8, 8);
+        });
+    }
+
+    updateGame();
+    requestAnimationFrame(drawGame);
+}
+
+// Initialize
+updateUI();
+drawGame();
+</script>
+</body>
+</html>
